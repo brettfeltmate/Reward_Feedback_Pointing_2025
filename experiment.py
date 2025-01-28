@@ -8,8 +8,15 @@ from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
 from klibs.KLGraphics import fill, flip, blit
-from klibs.KLUserInterface import key_pressed, pump, ui_request
+from klibs.KLUserInterface import (
+    key_pressed,
+    pump,
+    ui_request,
+    get_clicks,
+    mouse_clicked,
+)
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
+from klibs.KLTime import Stopwatch, CountDown
 
 from random import randrange
 from rich.console import Console
@@ -35,6 +42,7 @@ RED = (255, 0, 0, 255)
 GREEN = (0, 255, 0, 255)
 BLUE = (0, 0, 255, 255)
 WHITE = (255, 255, 255, 255)
+PURPLE = (255, 0, 255, 255)
 
 # Color-outcome mappings
 PENALTY_OUTLINE = RED
@@ -92,6 +100,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 fill=PENALTY_FILL,
                 stroke=[self.thickness, PENALTY_OUTLINE, STROKE_INNER],
             ),
+            "endpoint": kld.Asterisk(
+                size=self.circle_diam // 2, thickness=self.thickness, fill=PURPLE
+            ),
         }
 
         self.bounds = BoundarySet()
@@ -130,10 +141,11 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # get task condition for block
         self.current_condition = self.feedback_conditions.pop(0)
+        self.point_total = 0
 
         # if no-vision, record point total for presentation
-        if self.current_condition == "reward":
-            self.point_total = 0
+        # if self.current_condition == "reward":
+        #     self.point_total = 0
 
         # TODO: Implement block-specific instructions
         instrux = (
@@ -180,35 +192,112 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             self.console.log(self.bounds.boundaries)
 
+        if not P.practicing:
+            self.evm.add_event("rect_onset", 1000)
+            self.evm.add_event("circle_onset", 500, after="rect_onset")
+            self.evm.add_event("timeout", 750, after="circle_onset")
+
+    def trial(self):  # type: ignore[override]
         fill()
         blit(self.stimuli["fix"], location=self.bounds.boundaries["rect"].center, registration=5)  # type: ignore[operator]
         flip()
 
-        while True:
-            # Monitor for any commands to quit, etc
+        # fixed delay before rect presented
+        while self.evm.before("rect_onset"):
             q = pump(True)
             _ = ui_request(queue=q)
-            if key_pressed("space"):
-                break
 
-    def trial(self):  # type: ignore[override]
-        self.draw_stimuli()
+        self.draw_display(draw_circles=False)
 
-        while True:
-            # Monitor for any commands to quit, etc
-            q = pump(True)
-            _ = ui_request(queue=q)
-            if key_pressed("space"):
-                break
+        # wait for click, or
+        if P.practicing:
+            while not mouse_clicked():
+                q = pump(True)
+                _ = ui_request(queue=q)
 
-        self.draw_stimuli(draw_circles=True)
+        # wait fixed time to draw circles
+        else:
+            while self.evm.before("circle_onset"):
+                q = pump(True)
+                _ = ui_request(queue=q)
 
-        while True:
-            # Monitor for any commands to quit, etc
-            q = pump(True)
-            _ = ui_request(queue=q)
-            if key_pressed("space"):
-                break
+        self.draw_display(draw_circles=True)
+
+        #
+        # Response period
+        #
+
+        clicked_at = None
+        clicked_on = None
+        movement_time = None
+        payout = None
+
+        # no timeout during practice
+
+        movement_timer = Stopwatch()
+
+        if P.practicing:
+            while clicked_on is None:
+                clicked_at, clicked_on = self.listen_for_response()
+                movement_timer.pause()
+                movement_time = movement_timer.elapsed()
+
+        else:
+            while self.evm.before("timeout") and clicked_on is None:
+                clicked_at, clicked_on = self.listen_for_response()
+                movement_timer.pause()
+                movement_time = movement_timer.elapsed()
+
+        payout = self.get_payout(clicked_on)
+        self.point_total += payout
+
+        if P.practicing:
+            msg = message(f"Movement time was: {movement_time * 1000} ms.")  # type: ignore[operation]
+            self.draw_display(
+                draw_circles=False,
+                blit_this=(msg, self.bounds.boundaries["rect"].center),
+            )
+
+            feedback_duration = CountDown(1)
+
+            while feedback_duration.counting():
+                q = pump(True)
+                _ = ui_request(queue=q)
+
+        else:
+            if self.current_condition == "reward":
+
+                msg = message(f"Trial payout: {payout}", blit_txt=False)
+                self.draw_display(
+                    draw_circles=False,
+                    blit_this=(msg, self.bounds.boundaries["rect"].center),
+                )
+
+                feedback_duration = CountDown(0.5)
+                while feedback_duration.counting():
+                    q = pump(True)
+                    _ = ui_request()
+
+                msg = message(f"Total points: {self.point_total}")
+                self.draw_display(
+                    draw_circles=False,
+                    blit_this=(msg, self.bounds.boundaries["rect"].center),
+                )
+
+                feedback_duration = CountDown(1)
+                while feedback_duration.counting():
+                    q = pump(True)
+                    _ = ui_request(queue=q)
+
+            else:
+                self.draw_display(
+                    draw_circles=False, blit_this=(self.stimuli["endpoint"], clicked_at)
+                )
+
+                feedback_duration = CountDown(1)
+                while feedback_duration.counting():
+                    q = pump(True)
+                    _ = ui_request(queue=q)
 
         return {"block_num": P.block_number, "trial_num": P.trial_number}
 
@@ -218,7 +307,51 @@ class reward_feedback_pointing_2025(klibs.Experiment):
     def clean_up(self):
         pass
 
-    def draw_stimuli(self, draw_circles=False):
+    def get_payout(self, clicked_on: str | None):
+        if clicked_on is None:
+            return TIMEOUT_PAYOUT
+
+        elif clicked_on == "reward":
+            return REWARD_PAYOUT
+
+        elif clicked_on == "penalty":
+            return PENALTY_PAYOUT
+
+        elif clicked_on == "overlap":
+            return VENN_PAYOUT
+
+        else:  # inside rect, outside either circle
+            return MISS_PAYOUT
+
+    def listen_for_response(self):
+        clicks = get_clicks()
+        clicked = None
+
+        if len(clicks) > 1:
+            print("Multiple clicks detected; fix it.")
+            quit()
+
+        if len(clicks):
+            clicked_reward = self.bounds.within_boundary("reward", p=clicks[0])
+            clicked_penalty = self.bounds.within_boundary("penalty", p=clicks[0])
+            clicked_rect = self.bounds.within_boundary("rect", p=clicks[0])
+
+            if clicked_rect:
+                if clicked_reward and not clicked_penalty:
+                    clicked = "reward"
+
+                elif clicked_penalty and not clicked_reward:
+                    clicked = "penalty"
+
+                elif clicked_reward and clicked_penalty:
+                    clicked = "overlap"
+
+                else:
+                    clicked = "rect"
+
+        return clicks[0], clicked
+
+    def draw_display(self, draw_circles: bool, blit_this=None):
         fill()
 
         blit(
@@ -238,6 +371,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 location=self.trial_positions["reward"],
                 registration=5,
             )
+
+        if blit_this is not None:
+            if len(blit_this) < 2:
+                raise ValueError(
+                    "draw_display: blit_this must be a two-item list (obj, loc)"
+                )
+            blit(blit_this[0], location=blit_this[1], registration=5)
 
         flip()
 
