@@ -8,12 +8,10 @@ from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
 from klibs.KLGraphics import fill, flip, blit
-from klibs.KLUserInterface import key_pressed, pump, ui_request, any_key
+from klibs.KLUserInterface import key_pressed, pump, ui_request
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 
 from random import randrange
-
-from rich import print as rprint
 from rich.console import Console
 
 
@@ -30,7 +28,7 @@ CIRCLE_DIAM = 2  # this & rest are multiples of UNIT
 RECT_WIDTH = 13
 RECT_HEIGHT = 9
 FIX_WIDTH = 2
-THICKNESS = 0.3  # thickness of stimulus outlines
+THICKNESS = 0.05  # thickness of stimulus outlines
 
 # Colors
 RED = (255, 0, 0, 255)
@@ -183,7 +181,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             self.console.log(self.bounds.boundaries)
 
         fill()
-        blit(self.stimuli["fix"], location=P.screen_c, registration=5)
+        blit(self.stimuli["fix"], location=self.bounds.boundaries["rect"].center, registration=5)  # type: ignore[operator]
         flip()
 
         while True:
@@ -245,14 +243,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
     def get_circle_placements(self):
         rad_px = self.circle_diam / 2
-        padd = 2
+        circle_offset = 0.5 * rad_px
+        padd = self.thickness * 2
 
         rect_p1 = [int(xy) for xy in self.bounds.boundaries["rect"].p1]
         rect_p2 = [int(xy) for xy in self.bounds.boundaries["rect"].p2]
 
         if P.development_mode:
             self.console.log((rect_p1, rect_p2))
-
 
         origin_x = randrange(
             start=int(rect_p1[0] + (1.5 * rad_px) + padd),
@@ -267,16 +265,16 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         if self.penalty_side == "left":  # type: ignore[attr-defined]
             placements = {
-                "penalty": (origin_x - rad_px, origin_y),
-                "reward": (origin_x + rad_px, origin_y),
+                "penalty": (origin_x - circle_offset, origin_y),
+                "reward": (origin_x + circle_offset, origin_y),
             }
         else:
             placements = {
-                "reward": (origin_x - rad_px, origin_y),
-                "penalty": (origin_x + rad_px, origin_y),
+                "reward": (origin_x - circle_offset, origin_y),
+                "penalty": (origin_x + circle_offset, origin_y),
             }
 
         if P.development_mode:
             self.console.log(placements)
-        
+
         return placements
