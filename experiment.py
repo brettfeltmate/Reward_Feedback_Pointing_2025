@@ -14,6 +14,7 @@ from klibs.KLUserInterface import (
     ui_request,
     get_clicks,
     mouse_clicked,
+    mouse_pos
 )
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 from klibs.KLTime import Stopwatch, CountDown
@@ -192,12 +193,16 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             self.console.log(self.bounds.boundaries)
 
+        self.evm.add_event("rect_onset", 1000)
         if not P.practicing:
-            self.evm.add_event("rect_onset", 1000)
             self.evm.add_event("circle_onset", 500, after="rect_onset")
             self.evm.add_event("timeout", 750, after="circle_onset")
 
     def trial(self):  # type: ignore[override]
+
+        if P.development_mode:
+            mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
+
         fill()
         blit(self.stimuli["fix"], location=self.bounds.boundaries["rect"].center, registration=5)  # type: ignore[operator]
         flip()
