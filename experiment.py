@@ -2,6 +2,7 @@
 
 __author__ = "Brett Feltmate"
 
+from random import randrange
 import klibs
 from klibs import P
 from klibs.KLGraphics import KLDraw as kld
@@ -9,10 +10,10 @@ from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
 from klibs.KLGraphics import fill, flip
 from klibs.KLUserInterface import key_pressed, pump, ui_request
+from klibs.KLBoundary import BoundarySet, RectangleBoundary
 
 from pyfirmata import serial
 
-from random import randrange, choice
 
 # Arduino trigger values (for PLATO goggles)
 OPEN = b"55"
@@ -85,30 +86,45 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             ),
         }
 
+        self.bounds = BoundarySet()
+        self.bounds.add_boundary(
+            RectangleBoundary(
+                label="rect",
+                p1=(
+                    (P.screen_x / 2) + (RECT_WIDTH / 2),  # type: ignore[operator]
+                    (P.screen_y - OFFSET) - (RECT_HEIGHT / 2),  # type: ignore[operator]
+                ),
+                p2=(
+                    (P.screen_x / 2) - (RECT_WIDTH / 2),  # type: ignore[operator]
+                    (P.screen_y - OFFSET) + (RECT_HEIGHT / 2),  # type: ignore[operator]
+                ),
+            )
+        )
+
         #
         #   Set up condition order
         #
 
-        self.conditions = (
-            ["vision", "no_vision"]
+        self.feedback_conditions = (
+            ["vision", "reward"]
             if P.condition == "vision"
-            else ["no_vision", "vision"]
+            else ["reward", "vision"]
         )
 
         if (
             P.run_practice_blocks
         ):  # Double up on conditions if practice blocks are enabled
-            self.conditions = [cond for cond in self.conditions for _ in range(2)]
+            self.feedback_conditions = [cond for cond in self.feedback_conditions for _ in range(2)]
             self.insert_practice_block(block_nums=[1, 3], trial_counts=P.trials_per_practice_block)  # type: ignore[attr-defined]
 
     def block(self):
         self.goggles.write(OPEN)
 
         # get task condition for block
-        self.current_condition = self.conditions.pop(0)
+        self.current_condition = self.feedback_conditions.pop(0)
 
         # if no-vision, record point total for presentation
-        if self.current_condition == "no_vision":
+        if self.current_condition == "reward":
             self.point_total = 0
 
         # TODO: Implement block-specific instructions
@@ -150,31 +166,28 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         pass
 
     def get_circle_placements(self):
-        """
-        - Treat venned circles as 2 * 3 unit-sized rectangle
+        rad_px = (CIRCLE_DIAM / 2) * self.unit_px
+        padd = 2
 
-        - Using point located 21 cm up from bottom-center of screen as origin
-            - Select X offset from range 0 to (rect_width / 2 - 1.5) * unit
-            - Select Y offset from range 0 to (rect_height / 2 - 1) * unit
-            - Randomly select sign for both
-            - ... maybe add a bit of padding to prevent being flush with edge?
+        rect_p1 = self.bounds.boundaries["rect"].p1()
+        rect_p2 = self.bounds.boundaries["rect"].p2()
 
-        - Circles' registration points are then:
-            - Right circle: x = origin_x - offset_x - (0.5 * unit), y = origin_y
-            - Left circle:  x = origin_x - offset_x + (0.5 * unit), y = origin_y
-        """
+        origin_x = randrange(
+            start=rect_p1[0] + (1.5 * rad_px) + padd,
+            stop=rect_p2[0] - (1.5 * rad_px) - padd
+        )
+        origin_y = randrange(
+            start=rect_p1[1] + rad_px + padd,
+            stop=rect_p2[1] - rad_px - padd
+        )
 
-        # Get origin
-        origin = [P.screen_c[0], P.screen_y - OFFSET]  # type: ignore[operator]
-
-        # get offsets
-        x_offset = randrange(0, int(RECT_WIDTH / 2 - 1.5) * UNIT) * choice([-1, 1])
-        y_offset = randrange(0, int(RECT_HEIGHT / 2 - 1) * UNIT) * choice([-1, 1])
-
-        # get circle placements
-        right_origin = [origin[0] + x_offset, origin[1] + y_offset]
-        left_origin = [origin[0] - x_offset, origin[1] + y_offset]
-
-
-
-        pass
+        if self.penalty_side == "left":  # type: ignore[attr-defined]
+            return {
+                "penalty": (origin_x - rad_px, origin_y),
+                "reward": (origin_x + rad_px, origin_y)
+            }
+        else:
+            return {
+                "reward": (origin_x - rad_px, origin_y),
+                "penalty": (origin_x + rad_px, origin_y)
+            }

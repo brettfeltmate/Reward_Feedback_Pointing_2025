@@ -42,7 +42,7 @@ saccadic_motion_threshold = 0.15
 multi_session_project = False
 trials_per_block = 50
 blocks_per_experiment = 6
-conditions = ['vision', 'no_vision']
+conditions = ['vision', 'reward']
 default_condition = None
 
 #########################################

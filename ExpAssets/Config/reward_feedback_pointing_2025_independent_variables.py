@@ -47,6 +47,8 @@ you can also note this using a `(level, count)` tuple as shorthand, e.g. `('vali
 
 """
 
-exp_factors = FactorSet({
-    # Insert trial factors here
-})
+exp_factors = FactorSet(
+    {
+        "penalty_side": ["left", "right"],
+    }
+)
