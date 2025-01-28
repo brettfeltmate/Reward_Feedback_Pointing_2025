@@ -16,9 +16,11 @@ from klibs.KLUserInterface import (
     mouse_clicked,
     mouse_pos
 )
+from klibs.KLUtilities import now
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
-from klibs.KLTime import Stopwatch, CountDown
+from klibs.KLTime import CountDown
 
+from math import trunc
 from random import randrange
 from rich.console import Console
 
@@ -239,25 +241,27 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # no timeout during practice
 
-        movement_timer = Stopwatch()
+        movement_timer_start = now()
 
         if P.practicing:
             while clicked_on is None:
                 clicked_at, clicked_on = self.listen_for_response()
-                movement_timer.pause()
-                movement_time = movement_timer.elapsed()
+                movement_time = now() - movement_timer_start  # type: ignore[operator]
 
         else:
             while self.evm.before("timeout") and clicked_on is None:
                 clicked_at, clicked_on = self.listen_for_response()
-                movement_timer.pause()
-                movement_time = movement_timer.elapsed()
+                movement_time = now() - movement_timer_start  # type: ignore[operator]
 
         payout = self.get_payout(clicked_on)
         self.point_total += payout
 
+        if P.development_mode:
+            print("\ntrial()")
+            self.console.log(log_locals=True)
+
         if P.practicing:
-            msg = message(f"Movement time was: {movement_time * 1000} ms.")  # type: ignore[operation]
+            msg = message(f"Movement time was: {trunc(movement_time * 1000)} ms.")  # type: ignore[operation]
             self.draw_display(
                 draw_circles=False,
                 blit_this=(msg, self.bounds.boundaries["rect"].center),
@@ -303,6 +307,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 while feedback_duration.counting():
                     q = pump(True)
                     _ = ui_request(queue=q)
+
+        if P.development_mode:
+            print("\ntrial()")
+            self.console.log(log_locals=True)
 
         return {"block_num": P.block_number, "trial_num": P.trial_number}
 
@@ -354,10 +362,20 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 else:
                     clicked = "rect"
 
-        return clicks[0], clicked
+                if P.development_mode:
+                    print("\nlisten_for_response()")
+                    self.console.log(log_locals=True)
+
+                return clicks[0], clicked
+            
+        return None, None
 
     def draw_display(self, draw_circles: bool, blit_this=None):
+        if P.development_mode:
+            print("\ndraw_display()")
+            self.console.log(log_locals=True)
         fill()
+
 
         blit(
             self.stimuli["rect"],
@@ -420,6 +438,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             }
 
         if P.development_mode:
-            self.console.log(placements)
+            print("\nget_circle_placement()")
+            self.console.log(log_locals=True)
 
         return placements
