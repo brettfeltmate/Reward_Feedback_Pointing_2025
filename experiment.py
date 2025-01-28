@@ -2,17 +2,19 @@
 
 __author__ = "Brett Feltmate"
 
-from random import randrange
 import klibs
 from klibs import P
 from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
-from klibs.KLGraphics import fill, flip
-from klibs.KLUserInterface import key_pressed, pump, ui_request
-from klibs.KLBoundary import BoundarySet, RectangleBoundary
+from klibs.KLGraphics import fill, flip, blit
+from klibs.KLUserInterface import key_pressed, pump, ui_request, any_key
+from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 
-from pyfirmata import serial
+from random import randrange
+
+from rich import print as rprint
+from rich.console import Console
 
 
 # Arduino trigger values (for PLATO goggles)
@@ -54,8 +56,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
     def setup(self):
 
+        if P.development_mode:
+            self.console = Console()
         # Handles communication with arduino (goggles)
-        self.goggles = serial.Serial(port="COM6", baudrate=9600)
+        # self.goggles = serial.Serial(port="COM6", baudrate=9600)
 
         #
         #   Set up visual properties
@@ -63,26 +67,32 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # Get px per mm
         self.unit_px = (P.ppi / 25.4) * UNIT
+        self.offset = self.unit_px * OFFSET
+        self.rect_width = self.unit_px * RECT_WIDTH
+        self.rect_height = self.unit_px * RECT_HEIGHT
+        self.circle_diam = self.unit_px * CIRCLE_DIAM
+        self.fix_width = self.unit_px * FIX_WIDTH
+        self.thickness = self.unit_px * THICKNESS
 
         # Define stimuli
         self.stimuli = {
             "fix": kld.FixationCross(
-                size=self.unit_px * FIX_WIDTH, thickness=THICKNESS, fill=WHITE
+                size=self.fix_width, thickness=self.thickness, fill=WHITE
             ),
             "rect": kld.Rectangle(
-                width=self.unit_px * RECT_WIDTH,
-                height=self.unit_px * RECT_HEIGHT,
-                stroke=[THICKNESS, BLUE, STROKE_INNER],
+                width=self.rect_width,
+                height=self.rect_height,
+                stroke=[self.thickness, BLUE, STROKE_INNER],
             ),
             "reward": kld.Circle(
-                diameter=self.unit_px * CIRCLE_DIAM,
+                diameter=self.circle_diam,
                 fill=REWARD_FILL,
-                stroke=[THICKNESS, REWARD_OUTLINE, STROKE_INNER],
+                stroke=[self.thickness, REWARD_OUTLINE, STROKE_INNER],
             ),
             "penalty": kld.Circle(
-                diameter=self.unit_px * CIRCLE_DIAM,
+                diameter=self.circle_diam,
                 fill=PENALTY_FILL,
-                stroke=[THICKNESS, PENALTY_OUTLINE, STROKE_INNER],
+                stroke=[self.thickness, PENALTY_OUTLINE, STROKE_INNER],
             ),
         }
 
@@ -91,12 +101,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             RectangleBoundary(
                 label="rect",
                 p1=(
-                    (P.screen_x / 2) + (RECT_WIDTH / 2),  # type: ignore[operator]
-                    (P.screen_y - OFFSET) - (RECT_HEIGHT / 2),  # type: ignore[operator]
+                    (P.screen_x / 2) + (self.rect_width / 2),  # type: ignore[operator]
+                    (P.screen_y - self.offset) - (self.rect_height / 2),  # type: ignore[operator]
                 ),
                 p2=(
-                    (P.screen_x / 2) - (RECT_WIDTH / 2),  # type: ignore[operator]
-                    (P.screen_y - OFFSET) + (RECT_HEIGHT / 2),  # type: ignore[operator]
+                    (P.screen_x / 2) - (self.rect_width / 2),  # type: ignore[operator]
+                    (P.screen_y - self.offset) + (self.rect_height / 2),  # type: ignore[operator]
                 ),
             )
         )
@@ -106,19 +116,19 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         #
 
         self.feedback_conditions = (
-            ["vision", "reward"]
-            if P.condition == "vision"
-            else ["reward", "vision"]
+            ["vision", "reward"] if P.condition == "vision" else ["reward", "vision"]
         )
 
         if (
             P.run_practice_blocks
         ):  # Double up on conditions if practice blocks are enabled
-            self.feedback_conditions = [cond for cond in self.feedback_conditions for _ in range(2)]
+            self.feedback_conditions = [
+                cond for cond in self.feedback_conditions for _ in range(2)
+            ]
             self.insert_practice_block(block_nums=[1, 3], trial_counts=P.trials_per_practice_block)  # type: ignore[attr-defined]
 
     def block(self):
-        self.goggles.write(OPEN)
+        # self.goggles.write(OPEN)
 
         # get task condition for block
         self.current_condition = self.feedback_conditions.pop(0)
@@ -153,9 +163,54 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 break
 
     def trial_prep(self):
-        pass
+        self.trial_positions = self.get_circle_placements()
+
+        if P.development_mode:
+            self.console.log(self.trial_positions)
+
+        self.bounds.add_boundaries(
+            [
+                CircleBoundary(
+                    "penalty", self.trial_positions["penalty"], self.circle_diam / 2
+                ),
+                CircleBoundary(
+                    "reward", self.trial_positions["reward"], self.circle_diam / 2
+                ),
+            ]
+        )
+
+        if P.development_mode:
+            self.console.log(self.bounds.boundaries)
+
+        fill()
+        blit(self.stimuli["fix"], location=P.screen_c, registration=5)
+        flip()
+
+        while True:
+            # Monitor for any commands to quit, etc
+            q = pump(True)
+            _ = ui_request(queue=q)
+            if key_pressed("space"):
+                break
 
     def trial(self):  # type: ignore[override]
+        self.draw_stimuli()
+
+        while True:
+            # Monitor for any commands to quit, etc
+            q = pump(True)
+            _ = ui_request(queue=q)
+            if key_pressed("space"):
+                break
+
+        self.draw_stimuli(draw_circles=True)
+
+        while True:
+            # Monitor for any commands to quit, etc
+            q = pump(True)
+            _ = ui_request(queue=q)
+            if key_pressed("space"):
+                break
 
         return {"block_num": P.block_number, "trial_num": P.trial_number}
 
@@ -165,29 +220,63 @@ class reward_feedback_pointing_2025(klibs.Experiment):
     def clean_up(self):
         pass
 
+    def draw_stimuli(self, draw_circles=False):
+        fill()
+
+        blit(
+            self.stimuli["rect"],
+            location=self.bounds.boundaries["rect"].center,
+            registration=5,
+        )
+
+        if draw_circles:
+            blit(
+                self.stimuli["penalty"],
+                location=self.trial_positions["penalty"],
+                registration=5,
+            )
+            blit(
+                self.stimuli["reward"],
+                location=self.trial_positions["reward"],
+                registration=5,
+            )
+
+        flip()
+
     def get_circle_placements(self):
-        rad_px = (CIRCLE_DIAM / 2) * self.unit_px
+        rad_px = self.circle_diam / 2
         padd = 2
 
-        rect_p1 = self.bounds.boundaries["rect"].p1()
-        rect_p2 = self.bounds.boundaries["rect"].p2()
+        rect_p1 = [int(xy) for xy in self.bounds.boundaries["rect"].p1]
+        rect_p2 = [int(xy) for xy in self.bounds.boundaries["rect"].p2]
+
+        if P.development_mode:
+            self.console.log((rect_p1, rect_p2))
+
 
         origin_x = randrange(
-            start=rect_p1[0] + (1.5 * rad_px) + padd,
-            stop=rect_p2[0] - (1.5 * rad_px) - padd
+            start=int(rect_p1[0] + (1.5 * rad_px) + padd),
+            stop=int(rect_p2[0] - (1.5 * rad_px) - padd),
         )
         origin_y = randrange(
-            start=rect_p1[1] + rad_px + padd,
-            stop=rect_p2[1] - rad_px - padd
+            start=int(rect_p1[1] + rad_px + padd), stop=int(rect_p2[1] - rad_px - padd)
         )
 
+        if P.development_mode:
+            self.console.log((origin_x, origin_y))
+
         if self.penalty_side == "left":  # type: ignore[attr-defined]
-            return {
+            placements = {
                 "penalty": (origin_x - rad_px, origin_y),
-                "reward": (origin_x + rad_px, origin_y)
+                "reward": (origin_x + rad_px, origin_y),
             }
         else:
-            return {
+            placements = {
                 "reward": (origin_x - rad_px, origin_y),
-                "penalty": (origin_x + rad_px, origin_y)
+                "penalty": (origin_x + rad_px, origin_y),
             }
+
+        if P.development_mode:
+            self.console.log(placements)
+        
+        return placements
