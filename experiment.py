@@ -4,6 +4,7 @@ __author__ = "Brett Feltmate"
 
 import klibs
 from klibs import P
+from klibs.KLExceptions import TrialException
 from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
@@ -16,14 +17,17 @@ from klibs.KLUserInterface import (
     mouse_clicked,
     mouse_pos
 )
-from klibs.KLUtilities import now
+from klibs.KLInternal import now
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 from klibs.KLTime import CountDown
+
+from pyfirmata import serial
 
 from math import trunc
 from random import randrange
 from rich.console import Console
 
+from get_key_state import get_key_state  # type: ignore[import]
 
 # Arduino trigger values (for PLATO goggles)
 OPEN = b"55"
@@ -60,6 +64,11 @@ VENN_PAYOUT = -500
 MISS_PAYOUT = -700
 TIMEOUT_PAYOUT = 0
 
+# Simulus onset asynchronies
+RECT_ONSET = 1000  # fix (immediate) -> rect
+CIRC_ONSET = 500  # rect -> circles
+TIMEOUT_AFTER = 750  # circles -> (no) response
+
 
 class reward_feedback_pointing_2025(klibs.Experiment):
 
@@ -68,7 +77,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             self.console = Console()
         # Handles communication with arduino (goggles)
-        # self.goggles = serial.Serial(port="COM6", baudrate=9600)
+        self.goggles = serial.Serial(port="COM6", baudrate=9600)
 
         #
         #   Set up visual properties
@@ -140,15 +149,15 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             self.insert_practice_block(block_nums=[1, 3], trial_counts=P.trials_per_practice_block)  # type: ignore[attr-defined]
 
     def block(self):
-        # self.goggles.write(OPEN)
+        self.goggles.write(OPEN)
 
         # get task condition for block
         self.current_condition = self.feedback_conditions.pop(0)
         self.point_total = 0
 
         # if no-vision, record point total for presentation
-        # if self.current_condition == "reward":
-        #     self.point_total = 0
+        if self.current_condition == "reward":
+            self.point_total = 0
 
         # TODO: Implement block-specific instructions
         instrux = (
@@ -176,11 +185,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 break
 
     def trial_prep(self):
+        self.goggles.write(OPEN)
+        # determine circle positions
         self.trial_positions = self.get_circle_placements()
 
         if P.development_mode:
             self.console.log(self.trial_positions)
 
+        # register corresponding touch boundaries
         self.bounds.add_boundaries(
             [
                 CircleBoundary(
@@ -195,38 +207,58 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             self.console.log(self.bounds.boundaries)
 
+        # practice trial have "no" timeout, but code is cleaner if made excessively long instead
+        trial_timeout = TIMEOUT_AFTER if not P.practicing else 30000  # 30s when practicing
+
+        # register event timings
         self.evm.add_event("rect_onset", 1000)
-        if not P.practicing:
-            self.evm.add_event("circle_onset", 500, after="rect_onset")
-            self.evm.add_event("timeout", 750, after="circle_onset")
+        self.evm.add_event("circle_onset", 500, after="rect_onset")
+        self.evm.add_event("trial_timeout", trial_timeout, after="circle_onset")
 
-    def trial(self):  # type: ignore[override]
-
-        if P.development_mode:
-            mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
-
+        # present fix and wait for button press to begin
         fill()
         blit(self.stimuli["fix"], location=self.bounds.boundaries["rect"].center, registration=5)  # type: ignore[operator]
         flip()
 
-        # fixed delay before rect presented
-        while self.evm.before("rect_onset"):
+        while not key_pressed("space"):
             q = pump(True)
             _ = ui_request(queue=q)
 
-        self.draw_display(draw_circles=False)
+    def trial(self):  # type: ignore[override]
+        rt = None
+        clicked_at = None
+        clicked_on = None
+        mt = None
+        payout = None
 
-        # wait for click, or
-        if P.practicing:
-            while not mouse_clicked():
-                q = pump(True)
-                _ = ui_request(queue=q)
 
-        # wait fixed time to draw circles
-        else:
-            while self.evm.before("circle_onset"):
-                q = pump(True)
-                _ = ui_request(queue=q)
+        if P.development_mode:
+            mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
+
+
+        # admonish any movements made prior to circle onset
+        while self.evm.before("circle_onset"):
+            q = pump(True)
+            _ = ui_request(queue=q)
+
+            premptive_release = get_key_state("space") == 0
+
+            if premptive_release:
+                self.evm.stop_clock()
+
+                msg = message("Please wait until the\ncircles appear before moving.")
+                self.draw_display(draw_circles=False, blit_this=(msg, self.bounds.boundaries["rect"].center))
+                
+                self.wait_for(0.5)
+
+                raise TrialException("Premptive movement")
+
+            # fixed delay before rect presented
+            rect_visible = False
+            if self.evm.after("rect_onset") and not rect_visible:
+                self.draw_display(draw_circles=False)
+                rect_visible = True  # don't do redundant redraws
+
 
         self.draw_display(draw_circles=True)
 
@@ -234,85 +266,100 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         # Response period
         #
 
-        clicked_at = None
-        clicked_on = None
-        movement_time = None
-        payout = None
+        goggles_open = True
 
-        # no timeout during practice
+        # Listen for responses
+        while self.evm.before("trial_timeout") and clicked_on is None:
 
-        movement_timer_start = now()
+            while rt is None:
+                # log if/when spacebar was released
+                key_released = get_key_state("space")
+                if key_released:
+                    rt = self.evm.time_elapsed
 
-        if P.practicing:
-            while clicked_on is None:
-                clicked_at, clicked_on = self.listen_for_response()
-                movement_time = now() - movement_timer_start  # type: ignore[operator]
+            # in reward condition, close goggles on release
+            if self.current_condition == "reward" and goggles_open:
+                # self.goggles.write(CLOSE)
+                goggles_open = False
 
-        else:
-            while self.evm.before("timeout") and clicked_on is None:
-                clicked_at, clicked_on = self.listen_for_response()
-                movement_time = now() - movement_timer_start  # type: ignore[operator]
+            # log where 
+            clicked_at, clicked_on = self.listen_for_click()
 
+        # following click or timeout, ensure vision is available, regardless of condition
+        if not goggles_open:
+            self.goggles.write(OPEN)
+
+        # if click made, get time passed since key release (rt)
+        if clicked_on is not None:
+            mt = self.evm.time_elapsed - rt  # type: ignore[operator]
+
+        # determine appropriate payout
         payout = self.get_payout(clicked_on)
         self.point_total += payout
 
-        if P.development_mode:
-            print("\ntrial()")
-            self.console.log(log_locals=True)
+        # conditionally select feedback to present
+        if P.practicing:  # only provide mt during practice
+            if clicked_on is None:
+                text = "No response was detected."
+            else:
+                text = f"Movement time was: {trunc(mt)} ms."  # type: ignore[operation]
 
-        if P.practicing:
-            msg = message(f"Movement time was: {trunc(movement_time * 1000)} ms.")  # type: ignore[operation]
             self.draw_display(
                 draw_circles=False,
-                blit_this=(msg, self.bounds.boundaries["rect"].center),
+                blit_this=(message(text), self.bounds.boundaries["rect"].center),
             )
 
-            feedback_duration = CountDown(1)
-
-            while feedback_duration.counting():
-                q = pump(True)
-                _ = ui_request(queue=q)
+            self.wait_for(1)
 
         else:
+            # only present points earned
             if self.current_condition == "reward":
 
+                # for trial
                 msg = message(f"Trial payout: {payout}", blit_txt=False)
                 self.draw_display(
                     draw_circles=False,
                     blit_this=(msg, self.bounds.boundaries["rect"].center),
                 )
 
-                feedback_duration = CountDown(0.5)
-                while feedback_duration.counting():
-                    q = pump(True)
-                    _ = ui_request()
+                self.wait_for(0.5)
 
+                # overall block total
                 msg = message(f"Total points: {self.point_total}")
                 self.draw_display(
                     draw_circles=False,
                     blit_this=(msg, self.bounds.boundaries["rect"].center),
                 )
 
-                feedback_duration = CountDown(1)
-                while feedback_duration.counting():
-                    q = pump(True)
-                    _ = ui_request(queue=q)
-
+            # or, only present touch point
             else:
                 self.draw_display(
                     draw_circles=False, blit_this=(self.stimuli["endpoint"], clicked_at)
                 )
 
-                feedback_duration = CountDown(1)
-                while feedback_duration.counting():
-                    q = pump(True)
-                    _ = ui_request(queue=q)
+            # present feedback for 1s
+            self.wait_for(1)
 
         if P.development_mode:
             print("\ntrial()")
             self.console.log(log_locals=True)
 
-        return {"block_num": P.block_number, "trial_num": P.trial_number}
+        return {
+            "practicing": P.practicing,
+            "block_num": P.block_number,
+            "trial_num": P.trial_number,
+            "feedback_condition": self.current_condition if not P.practicing else "NA",
+            "reward_side": self.reward_side,  # type: ignore[defined]
+            "reward_x": self.trial_positions["reward"][0],
+            "reward_y": self.trial_positions["reward"][1],
+            "clicked_on": clicked_on if clicked_on is not None else "NA",
+            "clicked_x": clicked_at[0] if clicked_at is not None else "NA",
+            "clicked_y": clicked_at[1] if clicked_at is not None else "NA",
+            "reaction_time": rt,
+            "movement_time": mt,
+            "trial_payout": payout,
+            "total_payout": self.point_total
+        }
 
     def trial_clean_up(self):
         pass
@@ -336,12 +383,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         else:  # inside rect, outside either circle
             return MISS_PAYOUT
 
-    def listen_for_response(self):
+    def listen_for_click(self):
         clicks = get_clicks()
         clicked = None
 
         if len(clicks) > 1:
-            print("Multiple clicks detected; fix it.")
+            print("Multiple clicks detected. Fix that.")
             quit()
 
         if len(clicks):
@@ -426,7 +473,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             self.console.log((origin_x, origin_y))
 
-        if self.penalty_side == "left":  # type: ignore[attr-defined]
+        if self.reward_side == "right":  # type: ignore[attr-defined]
             placements = {
                 "penalty": (origin_x - circle_offset, origin_y),
                 "reward": (origin_x + circle_offset, origin_y),
@@ -442,3 +489,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             self.console.log(log_locals=True)
 
         return placements
+
+    def wait_for(self, duration: float):
+        wait_period = CountDown(duration)
+        while wait_period.counting():
+            q = pump(True)
+            _ = ui_request(queue=q)
+

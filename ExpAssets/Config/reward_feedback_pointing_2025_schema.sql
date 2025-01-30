@@ -53,6 +53,18 @@ CREATE TABLE participants (
 CREATE TABLE trials (
     id integer primary key autoincrement not null,
     participant_id integer not null references participants(id),
+    practicing text not null,
     block_num integer not null,
-    trial_num integer not null
+    trial_num integer not null,
+    feedback_condition text not null,
+    reward_side text not null,
+    reward_x text not null,
+    reward_y text not null,
+    clicked_on text not null,
+    clicked_x text not null,
+    clicked_y text not null,
+    reaction_time text not null,
+    movement_time text not null,
+    trial_payout text not null,
+    total_payout text not null
 );
