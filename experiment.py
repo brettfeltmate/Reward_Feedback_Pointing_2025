@@ -243,6 +243,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 rect_visible = True  # don't do redundant redraws
 
         self.draw_display(draw_circles=True)
+        circle_onset = self.evm.time_elapsed
 
         #
         # Response period
@@ -257,7 +258,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 # log if/when spacebar was released
                 key_released = get_key_state("space")
                 if key_released:
-                    rt = self.evm.time_elapsed
+                    rt = self.evm.time_elapsed - circle_onset
 
             # in reward condition, close goggles on release
             if self.condition == "reward" and goggles_open:
