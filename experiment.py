@@ -350,7 +350,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
     def clean_up(self):
         pass
 
-    def get_payout(self, clicked_on: str | None):
+    def get_payout(self, clicked_on = None):
         if clicked_on is None:
             return TIMEOUT_PAYOUT
 
