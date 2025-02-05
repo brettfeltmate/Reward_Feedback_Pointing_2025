@@ -243,7 +243,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 rect_visible = True  # don't do redundant redraws
 
         self.draw_display(draw_circles=True)
-        circle_onset = self.evm.time_elapsed
+        circle_onset_time = self.evm.trial_time_ms
 
         #
         # Response period
@@ -258,7 +258,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 # log if/when spacebar was released
                 key_released = get_key_state("space")
                 if key_released:
-                    rt = self.evm.time_elapsed - circle_onset
+                    rt = circle_onset_time - self.evm.trial_time_ms
 
             # in reward condition, close goggles on release
             if self.condition == "reward" and goggles_open:
@@ -269,12 +269,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             clicked_at, clicked_on = self.listen_for_click()
 
         # following click or timeout, ensure vision is available, regardless of condition
-        # if not goggles_open:
+        if not goggles_open:
             self.goggles.write(OPEN)
 
         # if click made, get time passed since key release (rt)
         if clicked_on is not None:
-            mt = self.evm.time_elapsed - rt  # type: ignore[operator]
+            mt = self.evm.trial_time_ms - rt  # type: ignore[operator]
 
         # determine appropriate payout
         trial_earnings = self.get_payout(clicked_on)
@@ -302,7 +302,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 msg = message(f"Trial payout: {trial_earnings}", blit_txt=False)
                 self.draw_display(
                     draw_circles=False,
-                    blit_this=(msg, self.bs.boundaries["rect"].center),
+                    blit_this= (msg, self.bs.boundaries["rect"].center),
                 )
 
                 self.wait_for(0.5)
@@ -326,6 +326,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if P.development_mode:
             print("\ntrial()")
             self.console.log(log_locals=True)
+
+
 
         return {
             "practicing": P.practicing,
