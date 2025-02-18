@@ -147,7 +147,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         else:
             self.condition = self.conditions.pop(0)
 
-        self.block_earnings = 0
+        self.bank = 0
 
         # TODO: Implement block-specific instructions
         instrux = (
@@ -211,7 +211,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         clicked_at = None
         clicked_on = None
         mt = None
-        trial_earnings = None
+        pay = None
 
         if P.development_mode:
             mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
@@ -229,7 +229,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 msg = message("Please wait until the\ncircles appear before moving.")
                 self.draw_display(
                     draw_circles=False,
-                    blit_this=(msg, self.bs.boundaries["rect"].center),
+                    this_too=(msg, self.bs.boundaries["rect"].center),
                 )
 
                 self.wait_for(0.5)
@@ -242,43 +242,43 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 self.draw_display(draw_circles=False)
                 rect_visible = True  # don't do redundant redraws
 
+
+        # present target circles
         self.draw_display(draw_circles=True)
         circle_onset_time = self.evm.trial_time_ms
 
-        #
-        # Response period
-        #
-
-        goggles_open = True
+        # Response window open #
 
         # Listen for responses
         while self.evm.before("trial_timeout") and clicked_on is None:
 
+            reach_in_motion = False
+
             while rt is None:
                 # log if/when spacebar was released
-                key_released = get_key_state("space")
-                if key_released:
+                reach_in_motion = get_key_state("space") == 0
+                if reach_in_motion:
                     rt = circle_onset_time - self.evm.trial_time_ms
 
             # in reward condition, close goggles on release
-            if self.condition == "reward" and goggles_open:
+            if self.condition == "reward" and reach_in_motion:
               self.goggles.write(CLOSE)
-              goggles_open = False
 
             # log where
             clicked_at, clicked_on = self.listen_for_click()
 
-        # following click or timeout, ensure vision is available, regardless of condition
-        if not goggles_open:
-            self.goggles.write(OPEN)
+        # response window closed #
 
-        # if click made, get time passed since key release (rt)
+        # get time to complete action
         if clicked_on is not None:
             mt = self.evm.trial_time_ms - rt  # type: ignore[operator]
 
+        # return vision
+        self.goggles.write(OPEN)
+
         # determine appropriate payout
-        trial_earnings = self.get_payout(clicked_on)
-        self.block_earnings += trial_earnings
+        pay = self.get_payout(clicked_on)
+        self.bank += pay
 
         # conditionally select feedback to present
         if P.practicing:  # only provide mt during practice
@@ -289,7 +289,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
             self.draw_display(
                 draw_circles=False,
-                blit_this=(message(text), self.bs.boundaries["rect"].center),
+                this_too=(message(text), self.bs.boundaries["rect"].center),
             )
 
             self.wait_for(1)
@@ -299,25 +299,25 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             if self.condition == "reward":
 
                 # for trial
-                msg = message(f"Trial payout: {trial_earnings}", blit_txt=False)
+                msg = message(f"Trial payout: {pay}", blit_txt=False)
                 self.draw_display(
                     draw_circles=False,
-                    blit_this= (msg, self.bs.boundaries["rect"].center),
+                    this_too= (msg, self.bs.boundaries["rect"].center),
                 )
 
                 self.wait_for(0.5)
 
                 # overall block total
-                msg = message(f"Total points: {self.block_earnings}")
+                msg = message(f"Total points: {self.bank}")
                 self.draw_display(
                     draw_circles=False,
-                    blit_this=(msg, self.bs.boundaries["rect"].center),
+                    this_too=(msg, self.bs.boundaries["rect"].center),
                 )
 
             # or, only present touch point
             else:
                 self.draw_display(
-                    draw_circles=True, blit_this=(self.stimuli["endpoint"], clicked_at)
+                    draw_circles=True, this_too=(self.stimuli["endpoint"], clicked_at)
                 )
 
             # present feedback for 1s
@@ -342,8 +342,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             "clicked_y": clicked_at[1] if clicked_at is not None else "NA",
             "reaction_time": rt,
             "movement_time": mt,
-            "trial_earnings": trial_earnings,
-            "block_earnings": self.block_earnings,
+            "trial_earnings": pay,
+            "block_earnings": self.bank,
         }
 
     def trial_clean_up(self):
@@ -402,7 +402,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         return None, None
 
-    def draw_display(self, draw_circles: bool, blit_this=None):
+    def draw_display(self, draw_circles: bool, this_too=None):
 
         fill()
 
@@ -424,13 +424,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 registration=5,
             )
 
-        if blit_this is not None:
-            if len(blit_this) < 2:
+        if this_too is not None:
+            if len(this_too) < 2:
                 raise ValueError(
                     "draw_display: blit_this must be a two-item list (obj, loc)"
                 )
             try:
-                blit(blit_this[0], location=blit_this[1], registration=5)
+                blit(this_too[0], location=this_too[1], registration=5)
             except Exception:
                 self.console.log(log_locals=True)
 
