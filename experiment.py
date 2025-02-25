@@ -271,7 +271,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # get time to complete action
         if clicked_on is not None:
-            mt = self.evm.trial_time_ms - rt  # type: ignore[operator]
+            mt = self.evm.trial_time_ms - rt - circle_onset_time  # type: ignore[operator]
 
         # return vision
         self.goggles.write(OPEN)
