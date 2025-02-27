@@ -258,7 +258,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 # log if/when spacebar was released
                 reach_in_motion = get_key_state("space") == 0
                 if reach_in_motion:
-                    rt = circle_onset_time - self.evm.trial_time_ms
+                    rt = self.evm.trial_time_ms - circle_onset_time  # type: ignore[operator]
 
             # in reward condition, close goggles on release
             if self.condition == "reward" and reach_in_motion:
