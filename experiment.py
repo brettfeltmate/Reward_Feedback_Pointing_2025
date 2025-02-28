@@ -24,7 +24,7 @@ from math import trunc
 from random import randrange
 from rich.console import Console
 
-# from pyfirmata import serial
+from pyfirmata import serial
 
 from get_key_state import get_key_state  # type: ignore[import]
 
@@ -72,9 +72,11 @@ TIMEOUT_AFTER = 750  # circles -> (no) response
 class reward_feedback_pointing_2025(klibs.Experiment):
     def setup(self):
 
-        if P.development_mode:
-            self.console = Console()
-
+        if P.condition is None:
+            raise ValueError(
+                'Initial condition (reward, vision) must be specified at runtime\n'
+                'using the condition flag (e.g. klibs run 24 -c vision).'
+            )
         # Handles communication with arduino (goggles)
         self.goggles = serial.Serial(port='COM6', baudrate=9600)
 
@@ -188,7 +190,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if not P.practicing:
             instrux += self.instructions[self.condition]
 
-        instrux += '\n\nPress spacebar to begin.'
+        instrux += '\n\nPress spacebar to begin.\nTrials are started by pressing/holding F6.'
 
         # Present instructions
         fill()
@@ -233,14 +235,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         )
 
         # present fix and wait for button press to begin
-        fill()
-        blit(self.stimuli['fix'], location=self.bs.boundaries['rect'].center, registration=5)  # type: ignore[operator]
-        flip()
+        self.draw_display(fix=True)
 
         if P.development_mode:
             self.console.log(log_locals=True)
 
-        while not key_pressed('space'):
+        while not key_pressed('F6'):
             q = pump(True)
             _ = ui_request(queue=q)
 
@@ -259,7 +259,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             q = pump(True)
             _ = ui_request(queue=q)
 
-            premptive_release = get_key_state('space') == 0
+            premptive_release = get_key_state('F6') == 0
 
             if premptive_release:
                 self.evm.stop_clock()
@@ -268,22 +268,21 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     'Please wait until the\ncircles appear before moving.'
                 )
                 self.draw_display(
-                    draw_circles=False,
-                    this_too=(msg, self.bs.boundaries['rect'].center),
+                    also=(msg, self.bs.boundaries['rect'].center),
                 )
 
-                self.wait_for(0.5)
+                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
                 raise TrialException('Premptive movement')
 
             # fixed delay before rect presented
             rect_visible = False
             if self.evm.after('rect_onset') and not rect_visible:
-                self.draw_display(draw_circles=False)
+                self.draw_display(rect=True)
                 rect_visible = True  # don't do redundant redraws
 
         # present target circles
-        self.draw_display(draw_circles=True)
+        self.draw_display(rect=True, circles=True)
         circle_onset_time = self.evm.trial_time_ms
 
         # Response window open #
@@ -295,7 +294,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
             while rt is None:
                 # log if/when spacebar was released
-                reach_in_motion = get_key_state('space') == 0
+                reach_in_motion = get_key_state('F6') == 0
                 if reach_in_motion:
                     rt = self.evm.trial_time_ms - circle_onset_time  # type: ignore[operator]
 
@@ -312,8 +311,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if clicked_on is not None:
             mt = self.evm.trial_time_ms - rt - circle_onset_time  # type: ignore[operator]
 
-        clear() 
-        # return vision
+        # Ensure circles have been removed, then return vision
+        clear()
         self.goggles.write(OPEN)
 
         # determine appropriate payout
@@ -322,17 +321,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # conditionally select feedback to present
         if P.practicing:  # only provide mt during practice
-            if clicked_on is None:
-                text = 'No response was detected.'
-            else:
-                text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
+            text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
 
             self.draw_display(
-                draw_circles=False,
-                this_too=(message(text), self.bs.boundaries['rect'].center),
+                rect=True,
+                also=(message(text), self.bs.boundaries['rect'].center),
             )
 
-            self.wait_for(1)
+            self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
         else:
             # only present points earned
@@ -341,28 +337,28 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 # for trial
                 msg = message(f'Trial payout: {pay}', blit_txt=False)
                 self.draw_display(
-                    draw_circles=False,
-                    this_too=(msg, self.bs.boundaries['rect'].center),
+                    rect=True,
+                    also=(msg, self.bs.boundaries['rect'].center),
                 )
 
-                self.wait_for(0.5)
+                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
                 # overall block total
                 msg = message(f'Total points: {self.bank}')
                 self.draw_display(
-                    draw_circles=False,
-                    this_too=(msg, self.bs.boundaries['rect'].center),
+                    rect=True,
+                    also=(msg, self.bs.boundaries['rect'].center),
                 )
 
             # or, only present touch point
             else:
                 self.draw_display(
-                    draw_circles=True,
-                    this_too=(self.stimuli['endpoint'], clicked_at),
+                    rect=True,
+                    also=(self.stimuli['endpoint'], clicked_at),
                 )
 
             # present feedback for 1s
-            self.wait_for(1)
+            self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
         if P.development_mode:
             print('\ntrial()')
@@ -411,10 +407,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         clicks = get_clicks()
         clicked = None
 
-        if len(clicks) > 1:
-            print('Multiple clicks detected. Fix that.')
-            quit()
-
         if len(clicks):
             clicked_reward = self.bs.within_boundary('reward', p=clicks[0])
             clicked_penalty = self.bs.within_boundary('penalty', p=clicks[0])
@@ -441,17 +433,31 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         return None, None
 
-    def draw_display(self, draw_circles: bool, this_too=None):
+    def draw_display(
+        self,
+        fix: bool = False,
+        rect: bool = False,
+        circles: bool = False,
+        also=None,
+    ):
 
         fill()
 
-        blit(
-            self.stimuli['rect'],
-            location=self.bs.boundaries['rect'].center,
-            registration=5,
-        )
+        if fix:
+            blit(
+                self.stimuli['fix'],
+                location=self.bs.boundaries['rect'].center,
+                registration=5,
+            )
 
-        if draw_circles:
+        if rect:
+            blit(
+                self.stimuli['rect'],
+                location=self.bs.boundaries['rect'].center,
+                registration=5,
+            )
+
+        if circles:
             blit(
                 self.stimuli['penalty'],
                 location=self.positions['penalty'],
@@ -463,15 +469,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 registration=5,
             )
 
-        if this_too is not None:
-            if len(this_too) < 2:
-                raise ValueError(
-                    'draw_display: blit_this must be a two-item list (obj, loc)'
-                )
-            try:
-                blit(this_too[0], location=this_too[1], registration=5)
-            except Exception:
-                self.console.log(log_locals=True)
+        if also:
+            blit(also[0], location=also[1], registration=5)
 
         flip()
 

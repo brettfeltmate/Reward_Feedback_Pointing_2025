@@ -67,3 +67,4 @@ append_hostname = False
 # PROJECT-SPECIFIC VARS
 #########################################
 trials_per_practice_block = 20
+feedback_duration = 2
