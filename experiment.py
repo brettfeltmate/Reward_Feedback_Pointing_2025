@@ -8,7 +8,7 @@ from klibs.KLExceptions import TrialException
 from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
-from klibs.KLGraphics import fill, flip, blit
+from klibs.KLGraphics import fill, flip, blit, clear
 from klibs.KLUserInterface import (
     key_pressed,
     pump,
@@ -24,7 +24,7 @@ from math import trunc
 from random import randrange
 from rich.console import Console
 
-from pyfirmata import serial
+# from pyfirmata import serial
 
 from get_key_state import get_key_state  # type: ignore[import]
 
@@ -185,7 +185,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         instrux = '(PRACTICE BLOCK)' if P.practicing else '(TESTING BLOCK)'
 
-        instrux += self.instructions[self.condition]
+        if not P.practicing:
+            instrux += self.instructions[self.condition]
+
         instrux += '\n\nPress spacebar to begin.'
 
         # Present instructions
@@ -310,6 +312,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         if clicked_on is not None:
             mt = self.evm.trial_time_ms - rt - circle_onset_time  # type: ignore[operator]
 
+        clear() 
         # return vision
         self.goggles.write(OPEN)
 
