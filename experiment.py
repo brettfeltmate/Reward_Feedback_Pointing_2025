@@ -351,6 +351,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             else:
                 self.draw_display(
                     rect=True,
+                    circles=True,
                     also=(self.stimuli['endpoint'], clicked_at),
                 )
         else:
