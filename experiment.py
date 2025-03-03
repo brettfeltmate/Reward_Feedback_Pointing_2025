@@ -22,7 +22,7 @@ from klibs.KLTime import CountDown
 from math import trunc
 from random import randrange
 
-
+from pyfirmata import serial
 from get_key_state import get_key_state  # type: ignore[import]
 
 # Arduino trigger values (for PLATO goggles)
@@ -182,7 +182,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         self.bank = 0
 
-        instrux = '(PRACTICE BLOCK)' if P.practicing else '(TESTING BLOCK)'
+        instrux = '(PRACTICE BLOCK)\n' if P.practicing else '(TESTING BLOCK)\n'
 
         if not P.practicing:
             instrux += self.instructions[self.condition]
@@ -317,41 +317,48 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         pay = self.get_payout(clicked_on)
         self.bank += pay
 
-        # conditionally select feedback to present
-        if self.condition == 'practice':  # only provide mt during practice
-            text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
+        if clicked_on is not None:
 
-            self.draw_display(
-                rect=True,
-                also=(message(text), self.bs.boundaries['rect'].center),
-            )
+            # conditionally select feedback to present
+            if self.condition == 'practice':  # only provide mt during practice
+                text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
 
-        elif self.condition == 'reward':
-            # only present points earned
+                self.draw_display(
+                    rect=True,
+                    also=(message(text), self.bs.boundaries['rect'].center),
+                )
 
-            # for trial
-            msg = message(f'Trial payout: {pay}', blit_txt=False)
-            self.draw_display(
-                rect=True,
-                also=(msg, self.bs.boundaries['rect'].center),
-            )
+            elif self.condition == 'reward':
+                # only present points earned
 
-            self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
+                # for trial
+                msg = message(f'Trial payout: {pay}', blit_txt=False)
+                self.draw_display(
+                    rect=True,
+                    also=(msg, self.bs.boundaries['rect'].center),
+                )
 
-            # overall block total
-            msg = message(f'Total points: {self.bank}')
-            self.draw_display(
-                rect=True,
-                also=(msg, self.bs.boundaries['rect'].center),
-            )
+                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
-            # or, only present touch point
+                # overall block total
+                msg = message(f'Total points: {self.bank}')
+                self.draw_display(
+                    rect=True,
+                    also=(msg, self.bs.boundaries['rect'].center),
+                )
+
+                # or, only present touch point
+            else:
+                self.draw_display(
+                    rect=True,
+                    also=(self.stimuli['endpoint'], clicked_at),
+                )
         else:
+            msg = message('Trial timed-out!\nNo response was detected!')
             self.draw_display(
                 rect=True,
-                also=(self.stimuli['endpoint'], clicked_at),
+                also=(msg, self.bs.boundaries['rect'].center),
             )
-
 
         # present final feedback for 1s
         self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
