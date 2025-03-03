@@ -8,7 +8,7 @@ from klibs.KLExceptions import TrialException
 from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
-from klibs.KLGraphics import fill, flip, blit, clear
+from klibs.KLGraphics import fill, flip, blit
 from klibs.KLUserInterface import (
     key_pressed,
     pump,
@@ -19,12 +19,9 @@ from klibs.KLUserInterface import (
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 from klibs.KLTime import CountDown
 
-
 from math import trunc
 from random import randrange
-from rich.console import Console
 
-from pyfirmata import serial
 
 from get_key_state import get_key_state  # type: ignore[import]
 
@@ -143,13 +140,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             else ['reward', 'vision']
         )
 
-        if (
-            P.run_practice_blocks
-        ):  # Double up on conditions if practice blocks are enabled
-            self.conditions = [
-                cond for _ in range(3) for cond in self.conditions
-            ]
-            self.insert_practice_block(block_nums=[1], trial_counts=P.trials_per_practice_block)  # type: ignore[attr-defined]
+        self.conditions = [cond for cond in self.conditions for _ in range(3)]
+
+        if P.run_practice_blocks:
+            self.insert_practice_block(
+                block_nums=[1],
+                trial_counts=P.trials_per_practice_block,  # type: ignore[attr-defined]
+            )
 
         #
         #   Instruction set
@@ -237,9 +234,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         # present fix and wait for button press to begin
         self.draw_display(fix=True)
 
-        if P.development_mode:
-            self.console.log(log_locals=True)
-
         while not key_pressed('F6'):
             q = pump(True)
             _ = ui_request(queue=q)
@@ -281,8 +275,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 self.draw_display(rect=True)
                 rect_visible = True  # don't do redundant redraws
 
-        # present target circles
-        self.draw_display(rect=True, circles=True)
+                if self.condition == 'practice':
+                    break
+
+        # If not practicing, present target circles now
+        if not self.condition == 'practice':
+            self.draw_display(rect=True, circles=True)
+
         circle_onset_time = self.evm.trial_time_ms
 
         # Response window open #
@@ -312,7 +311,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             mt = self.evm.trial_time_ms - rt - circle_onset_time  # type: ignore[operator]
 
         # Ensure circles have been removed, then return vision
-        clear()
         self.goggles.write(OPEN)
 
         # determine appropriate payout
@@ -320,7 +318,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         self.bank += pay
 
         # conditionally select feedback to present
-        if P.practicing:  # only provide mt during practice
+        if self.condition == 'practice':  # only provide mt during practice
             text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
 
             self.draw_display(
@@ -328,41 +326,35 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 also=(message(text), self.bs.boundaries['rect'].center),
             )
 
+        elif self.condition == 'reward':
+            # only present points earned
+
+            # for trial
+            msg = message(f'Trial payout: {pay}', blit_txt=False)
+            self.draw_display(
+                rect=True,
+                also=(msg, self.bs.boundaries['rect'].center),
+            )
+
             self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
-        else:
-            # only present points earned
-            if self.condition == 'reward':
-
-                # for trial
-                msg = message(f'Trial payout: {pay}', blit_txt=False)
-                self.draw_display(
-                    rect=True,
-                    also=(msg, self.bs.boundaries['rect'].center),
-                )
-
-                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
-
-                # overall block total
-                msg = message(f'Total points: {self.bank}')
-                self.draw_display(
-                    rect=True,
-                    also=(msg, self.bs.boundaries['rect'].center),
-                )
+            # overall block total
+            msg = message(f'Total points: {self.bank}')
+            self.draw_display(
+                rect=True,
+                also=(msg, self.bs.boundaries['rect'].center),
+            )
 
             # or, only present touch point
-            else:
-                self.draw_display(
-                    rect=True,
-                    also=(self.stimuli['endpoint'], clicked_at),
-                )
+        else:
+            self.draw_display(
+                rect=True,
+                also=(self.stimuli['endpoint'], clicked_at),
+            )
 
-            # present feedback for 1s
-            self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
-        if P.development_mode:
-            print('\ntrial()')
-            self.console.log(log_locals=True)
+        # present final feedback for 1s
+        self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
         return {
             'practicing': P.practicing,
@@ -424,10 +416,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 else:
                     clicked = 'rect'
-
-                if P.development_mode:
-                    print('\nlisten_for_response()')
-                    self.console.log(log_locals=True)
 
                 return clicks[0], clicked
 
@@ -501,10 +489,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 'reward': (origin_x - circle_offset, origin_y),
                 'penalty': (origin_x + circle_offset, origin_y),
             }
-
-        if P.development_mode:
-            print('\nget_circle_placement()')
-            self.console.log(log_locals=True)
 
         return placements
 
