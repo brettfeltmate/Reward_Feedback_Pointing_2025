@@ -362,7 +362,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             )
 
         # present final feedback for 1s
-        self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
+        self.wait_for(P. feedback_duration)  # type: ignore[attr-defined]
 
         return {
             'practicing': P.practicing,
@@ -400,7 +400,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         elif clicked_on == 'overlap':
             return VENN_PAYOUT
 
-        else:  # inside rect, outside either circle
+        elif clicked_on == "outside":  # inside rect, outside either circle
+            return 0
+
+        else:
             return MISS_PAYOUT
 
     def listen_for_click(self):
@@ -424,10 +427,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 else:
                     clicked = 'rect'
+                
+            else:
+                clicked = "outside"
+        else:
+            clicks = [[-1, -1]]
 
-                return clicks[0], clicked
+        return clicks[0], clicked
 
-        return None, None
 
     def draw_display(
         self,
