@@ -4,11 +4,12 @@ __author__ = 'Brett Feltmate'
 
 import klibs
 from klibs import P
+from klibs.KLAudio import Tone
 from klibs.KLExceptions import TrialException
 from klibs.KLGraphics import KLDraw as kld
 from klibs.KLConstants import STROKE_INNER
 from klibs.KLCommunication import message
-from klibs.KLGraphics import fill, flip, blit
+from klibs.KLGraphics import fill, flip, blit, clear
 from klibs.KLUserInterface import (
     key_pressed,
     pump,
@@ -63,8 +64,8 @@ TIMEOUT_PAYOUT = 0
 # Simulus onset asynchronies
 RECT_ONSET = 1000  # fix (immediate) -> rect
 CIRC_ONSET = 500  # rect -> circles
-TIMEOUT_AFTER = 750  # circles -> (no) response
-
+PREVIEW_WINDOW = 300   # circle onset -> go signal
+TIMEOUT_AFTER = 650  # circles -> (no) response
 
 class reward_feedback_pointing_2025(klibs.Experiment):
     def setup(self):
@@ -76,6 +77,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             )
         # Handles communication with arduino (goggles)
         self.goggles = serial.Serial(port='COM6', baudrate=9600)
+
+        # Go-signal
+        self.go_tone = Tone(100)
 
         #
         #   Set up visual properties
@@ -225,11 +229,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         )  # 30s when practicing
 
         # register event timings
-        self.evm.add_event('rect_onset', 1000)
-        self.evm.add_event('circle_onset', 500, after='rect_onset')
-        self.evm.add_event(
-            'trial_timeout', trial_timeout, after='circle_onset'
-        )
+        self.evm.add_event('rect_onset', RECT_ONSET)
+        self.evm.add_event('circle_onset', CIRC_ONSET, after='rect_onset')
+        self.evm.add_event('go_signal', PREVIEW_WINDOW, after='circle_onset')
+        self.evm.add_event('trial_timeout', trial_timeout, after='go_signal')
 
         # present fix and wait for button press to begin
         self.draw_display(fix=True)
@@ -239,28 +242,19 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             _ = ui_request(queue=q)
 
     def trial(self):  # type: ignore[override]
-        rt = None
-        clicked_at = None
-        clicked_on = None
-        mt = None
-        pay = None
 
         if P.development_mode:
             mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
 
-        # admonish any movements made prior to circle onset
-        while self.evm.before('circle_onset'):
+        # Monitor for and admonish premature movements
+        while self.evm.before('go_signal'):
             q = pump(True)
             _ = ui_request(queue=q)
 
-            premptive_release = get_key_state('F6') == 0
-
-            if premptive_release:
+            if get_key_state('F6') == 0:
                 self.evm.stop_clock()
 
-                msg = message(
-                    'Please wait until the\ncircles appear before moving.'
-                )
+                msg = message('Please wait for the tone before moving.')
                 self.draw_display(
                     also=(msg, self.bs.boundaries['rect'].center),
                 )
@@ -269,58 +263,57 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 raise TrialException('Premptive movement')
 
+            rect_visible, circles_visible = False, False
+
             # fixed delay before rect presented
-            rect_visible = False
             if self.evm.after('rect_onset') and not rect_visible:
                 self.draw_display(rect=True)
                 rect_visible = True  # don't do redundant redraws
 
-                if self.condition == 'practice':
-                    break
+            if (
+                self.evm.after('circle_onset')
+                and not P.practicing
+                and not circles_visible
+            ):
+                self.draw_display(rect=True, circles=True)
+                circles_visible = True
 
-        # If not practicing, present target circles now
-        if not self.condition == 'practice':
-            self.draw_display(rect=True, circles=True)
+        self.go_tone.play()
+        tone_play_time = self.evm.trial_time_ms
 
-        circle_onset_time = self.evm.trial_time_ms
-
-        # Response window open #
-
-        # Listen for responses
-        while self.evm.before('trial_timeout') and clicked_on is None:
-
-            reach_in_motion = False
+        # Response window start #
+        rt, mt, clicked_on, clicked_at, pay = None, None, None, None, None
+        while self.evm.before('trial_timeout'):
 
             while rt is None:
-                # log if/when spacebar was released
-                reach_in_motion = get_key_state('F6') == 0
-                if reach_in_motion:
-                    rt = self.evm.trial_time_ms - circle_onset_time  # type: ignore[operator]
+                if get_key_state('F6') == 0:
+                    rt = self.evm.trial_time_ms - tone_play_time  # type: ignore[operator]
 
-            # in reward condition, close goggles on release
-            if self.condition == 'reward' and reach_in_motion:
-                self.goggles.write(CLOSE)
+                    # conditionally close goggles at movement start
+                    if self.condition == 'reward':
+                        self.goggles.write(CLOSE)
 
-            # log where
+            # log touched point, if any 
             clicked_at, clicked_on = self.listen_for_click()
 
-        # response window closed #
-
-        # get time to complete action
-        if clicked_on is not None:
-            mt = self.evm.trial_time_ms - rt - circle_onset_time  # type: ignore[operator]
+            if clicked_on is not None:
+                mt = self.evm.trial_time_ms - rt - tone_play_time  # type: ignore[operator]
+                break
+        # response window end #
 
         # Ensure circles have been removed, then return vision
+        clear()
         self.goggles.write(OPEN)
 
         # determine appropriate payout
         pay = self.get_payout(clicked_on)
         self.bank += pay
 
+        # conditionally display performance feedback
         if clicked_on is not None:
 
-            # conditionally select feedback to present
-            if self.condition == 'practice':  # only provide mt during practice
+            # only movement time provided on practice trials
+            if self.condition == 'practice':
                 text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
 
                 self.draw_display(
@@ -328,10 +321,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     also=(message(text), self.bs.boundaries['rect'].center),
                 )
 
+            # only present earnings (e.g., no visual indication of performance)
             elif self.condition == 'reward':
-                # only present points earned
 
-                # for trial
+                # earnings for trial
                 msg = message(f'Trial payout: {pay}', blit_txt=False)
                 self.draw_display(
                     rect=True,
@@ -340,20 +333,22 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
-                # overall block total
+                # current earnings for block
                 msg = message(f'Total points: {self.bank}')
                 self.draw_display(
                     rect=True,
                     also=(msg, self.bs.boundaries['rect'].center),
                 )
 
-                # or, only present touch point
+            # only present landing point (e.g., no "earnings" in vision condition)
             else:
                 self.draw_display(
                     rect=True,
                     circles=True,
                     also=(self.stimuli['endpoint'], clicked_at),
                 )
+
+        # on failures to complete movement within timeframe
         else:
             msg = message('Trial timed-out!\nNo response was detected!')
             self.draw_display(
@@ -361,8 +356,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 also=(msg, self.bs.boundaries['rect'].center),
             )
 
-        # present final feedback for 1s
-        self.wait_for(P. feedback_duration)  # type: ignore[attr-defined]
+        self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
 
         return {
             'practicing': P.practicing,
@@ -400,7 +394,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         elif clicked_on == 'overlap':
             return VENN_PAYOUT
 
-        elif clicked_on == "outside":  # inside rect, outside either circle
+        elif clicked_on == 'outside':
             return 0
 
         else:
@@ -427,14 +421,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 else:
                     clicked = 'rect'
-                
+
             else:
-                clicked = "outside"
+                clicked = 'outside'
         else:
             clicks = [[-1, -1]]
 
         return clicks[0], clicked
-
 
     def draw_display(
         self,
