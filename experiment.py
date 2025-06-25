@@ -58,8 +58,9 @@ REWARD_FILL = None
 REWARD_PAYOUT = 100
 PENALTY_PAYOUT = -600
 VENN_PAYOUT = -500
-MISS_PAYOUT = -700
-TIMEOUT_PAYOUT = 0
+MISS_PAYOUT = 0
+TIMEOUT_PAYOUT = -700
+# TODO: Need to change payout logic accordingly
 
 # Simulus onset asynchronies
 RECT_ONSET = 1000  # fix (immediate) -> rect
