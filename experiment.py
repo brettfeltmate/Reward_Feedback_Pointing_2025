@@ -16,6 +16,7 @@ from klibs.KLUserInterface import (
     ui_request,
     get_clicks,
     mouse_pos,
+    smart_sleep
 )
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
 from klibs.KLTime import CountDown
@@ -165,14 +166,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 '\n'
                 'as well as your cumulative points so far.'
                 '\n\n'
-                'You will complete 150 trials of this condition; you may take a break in between trials whenever you need.'
+                f'You will complete {P.blocks_per_experiment * P.trials_per_block // 2} trials of this condition; you may take a break in between trials whenever you need.'
             ),
             'vision': (
                 'You will be able to see the target and where you land,'
                 '\n'
                 'however you will not see how many points you gained/lost on the trial nor your cumulative points so far.'
                 '\n\n'
-                'You will complete 150 trials of this condition; you may take a break in between trials whenever you need.'
+                f'You will complete {P.blocks_per_experiment * P.trials_per_block // 2} trials of this condition; you may take a break in between trials whenever you need.'
             ),
         }
 
@@ -304,7 +305,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         # Ensure circles have been removed, then return vision
         clear()
-        self.goggles.write(OPEN)
+        # self.goggles.write(OPEN)
 
         # determine appropriate payout
         pay = self.get_payout(clicked_on)
@@ -325,6 +326,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             # only present earnings (e.g., no visual indication of performance)
             elif self.condition == 'reward':
 
+                smart_sleep(300)
+                self.goggles.write(OPEN)
+
                 # earnings for trial
                 msg = message(f'Trial payout: {pay}', blit_txt=False)
                 self.draw_display(
@@ -343,11 +347,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
             # only present landing point (e.g., no "earnings" in vision condition)
             else:
-                self.draw_display(
-                    rect=True,
-                    circles=True,
-                    also=(self.stimuli['endpoint'], clicked_at),
-                )
+                self.goggles.write(OPEN)
+                # self.draw_display(
+                #     rect=True,
+                #     circles=True,
+                #     also=(self.stimuli['endpoint'], clicked_at),
+                # )
 
         # on failures to complete movement within timeframe
         else:
