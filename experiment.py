@@ -79,7 +79,7 @@ OUTSIDE = 'outside'
 OVERLAP = 'overlap'
 ENDPOINT = 'endpoint'
 SPACE = 'space'
-RECT_ONSET = 'rect_onset'
+RECTANGLE_ONSET = 'rectangle_onset'
 CIRCLE_ONSET = 'circle_onset'
 GO_SIGNAL = 'go_signal'
 TRIAL_TIMEOUT = 'trial_timeout'
@@ -266,8 +266,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         )  # 30s when practicing
 
         # register event timings
-        self.evm.add_event(RECT_ONSET, RECT_ONSET)
-        self.evm.add_event(CIRCLE_ONSET, CIRC_ONSET, after=RECT_ONSET)
+        self.evm.add_event(RECTANGLE_ONSET, RECT_ONSET)
+        self.evm.add_event(CIRCLE_ONSET, CIRC_ONSET, after=RECTANGLE_ONSET)
         self.evm.add_event(GO_SIGNAL, PREVIEW_WINDOW, after=CIRCLE_ONSET)
         self.evm.add_event(TRIAL_TIMEOUT, trial_timeout, after=GO_SIGNAL)
 
@@ -281,9 +281,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             _ = ui_request(queue=q)
 
             touch_events = get_clicks(queue=q)
-            print(
-                f'DEBUG[1]: experiment.py:284: screen_touches={touch_events}'
-            )
 
             if touch_events:
                 at_start_pos = self.bs.within_boundary(
@@ -318,7 +315,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             rect_visible, circles_visible = False, False
 
             # fixed delay before rect presented
-            if self.evm.after(RECT_ONSET) and not rect_visible:
+            if self.evm.after(RECTANGLE_ONSET) and not rect_visible:
                 self.draw_display(rect=True)
                 rect_visible = True  # don't do redundant redraws
 
@@ -498,6 +495,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
     ):
 
         fill()
+
+        blit(
+            self.stimuli[START],
+            location = self.bs.boundaries[START].center,
+            registration = 5
+        )
 
         if fix:
             blit(
