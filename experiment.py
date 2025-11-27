@@ -433,7 +433,27 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         }
 
     def trial_clean_up(self):
-        pass
+        # Present block score summary at end of reward blocks
+        if self.condition == REWARD:
+            if P.trial_number % P.trials_per_block == 0:
+                clear()
+                self.goggles.write(OPEN)
+
+                fill()
+                message(
+                    text=f'End of block! You scored: {self.bank}.\nPress spacebar to continue.',
+                    location=P.screen_c,
+                    blit_txt=True,
+                )
+                flip()
+
+                while True:
+                    q = pump(True)
+                    _ = ui_request(queue=q)
+                    if key_pressed(SPACE):
+                        break
+
+                clear()
 
     def clean_up(self):
         pass
@@ -496,13 +516,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         fill()
 
-        blit(
-            self.stimuli[START],
-            location = self.bs.boundaries[START].center,
-            registration = 5
-        )
-
         if fix:
+            blit(
+                self.stimuli[START],
+                location=self.bs.boundaries[START].center,
+                registration=5,
+            )
+
             blit(
                 self.stimuli[FIX],
                 location=self.bs.boundaries[RECT].center,
