@@ -450,7 +450,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 while True:
                     q = pump(True)
                     _ = ui_request(queue=q)
-                    if key_pressed(SPACE):
+                    if key_pressed(SPACE, queue=q):
                         break
 
                 clear()
