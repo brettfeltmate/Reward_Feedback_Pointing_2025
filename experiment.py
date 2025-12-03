@@ -19,24 +19,22 @@ from klibs.KLUserInterface import (
     smart_sleep,
 )
 from klibs.KLBoundary import BoundarySet, CircleBoundary, RectangleBoundary
-from klibs.KLTime import CountDown
 
 from math import trunc
 from random import randrange
 
+# For Arduino communication
 from pyfirmata import serial
 
-# Arduino trigger values (for PLATO goggles)
+# Trigger values sent to PLATO goggles via Arduino
 OPEN = b'55'
 CLOSE = b'56'
 BAUD = 9600
 
-# fixation and rectangle are placed
-OFFSET = 21  # cms above screen bottom (horizontally centered)
-
 # Stimulus sizes
 UNIT = 9  # 9 mm; converted to px at runtime
 CIRCLE_DIAM = 2  # this & rest are multiples of UNIT
+OFFSET = 21  # up from screen bottom
 RECT_WIDTH = 13
 RECT_HEIGHT = 9
 FIX_WIDTH = 2
@@ -67,7 +65,7 @@ CIRC_ONSET = 500  # rect -> circles
 PREVIEW_WINDOW = 300   # circle onset -> go signal
 TIMEOUT_AFTER = 650  # circles -> (no) response
 
-# Typo protections
+# This way I can't make typos later
 COM6 = 'COM6'  # Serial port for arduino communication
 START = 'start'
 FIX = 'fix'
@@ -87,6 +85,7 @@ NA = 'NA'
 
 
 class reward_feedback_pointing_2025(klibs.Experiment):
+    # Run first, and once, at the start of the experiment
     def setup(self):
 
         if P.condition is None:
@@ -104,7 +103,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         #   Set up visual properties
         #
 
-        # Get px per mm
+        # Now that screensize is know, convert sizes to px
         self.unit = (P.ppi / 25.4) * UNIT
         self.offset = self.unit * OFFSET
         self.rect_w = self.unit * RECT_WIDTH
@@ -114,7 +113,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         self.fix_w = self.unit * FIX_WIDTH
         self.thick = self.unit * THICKNESS
 
-        # Define stimuli
+        # Define visual stimulus objects
         self.stimuli = {
             START: kld.Circle(
                 diameter=self.start_circle_d,
@@ -146,7 +145,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             ),
         }
 
-        # TODO: Wrap in add_boundaries method
+        # Define boundaries for touch detection
+        # TODO: add KLibs feature: accept KLDrawbject, create matching boundary
         self.bs = BoundarySet()
         self.bs.add_boundary(
             CircleBoundary(
@@ -173,12 +173,15 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         #   Set up condition order
         #
 
+        # P.condition is set at runtime via klibs' --condition cli flag
         self.conditions = (
             [VISION, REWARD] if P.condition == VISION else [REWARD, VISION]
         )
 
+        # Each condition repeated 3 times in interleaved order for total of 6 blocks
         self.conditions = [cond for cond in self.conditions for _ in range(3)]
 
+        # If desired, insert practice block at start of experiment
         if P.run_practice_blocks:
             self.insert_practice_block(
                 block_nums=[1],
@@ -208,6 +211,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             ),
         }
 
+    # First function called at start of each block
     def block(self):
         self.goggles.write(OPEN)
 
@@ -217,6 +221,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         else:
             self.condition = self.conditions.pop(0)
 
+        # for storing block earnings
         self.bank = 0
 
         instrux = '(PRACTICE BLOCK)\n' if P.practicing else '(TESTING BLOCK)\n'
@@ -239,12 +244,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             if key_pressed(SPACE):
                 break
 
+    # First function called immediately prior to each trial
     def trial_prep(self):
         self.goggles.write(OPEN)
         # determine circle positions
         self.positions = self.get_circle_placements()
 
-        # register corresponding touch boundaries
+        # this changes for each trial, so needs to be (re)defined here
         self.bs.add_boundaries(
             [
                 CircleBoundary(
@@ -265,38 +271,46 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             TIMEOUT_AFTER if not P.practicing else 30000
         )  # 30s when practicing
 
-        # register event timings
+        # Defined event sequence within trial
         self.evm.add_event(RECTANGLE_ONSET, RECT_ONSET)
         self.evm.add_event(CIRCLE_ONSET, CIRC_ONSET, after=RECTANGLE_ONSET)
         self.evm.add_event(GO_SIGNAL, PREVIEW_WINDOW, after=CIRCLE_ONSET)
         self.evm.add_event(TRIAL_TIMEOUT, trial_timeout, after=GO_SIGNAL)
 
-        # present fix and wait for button press to begin
+        # present fix
         self.draw_display(fix=True)
 
+        # trial started by having participant contact start position
         at_start_pos = False
 
         while not at_start_pos:
+            # Monitor for any commands to quit, etc
             q = pump(True)
             _ = ui_request(queue=q)
 
+            # NOTE: touchscreens reports touches as left-clicks
             touch_events = get_clicks(queue=q)
 
+            # Break on any touches within start boundary
             if touch_events:
                 at_start_pos = self.bs.within_boundary(
                     label=START, p=touch_events[0]
                 )
 
+    # Main trial logic
     def trial(self):  # type: ignore[override]
 
+        # When (dev) testing, blit mouse to start position
         if P.development_mode:
             mouse_pos(position=(P.screen_x // 2, P.screen_y))  # type: ignore[operator]
 
-        # Monitor for and admonish premature movements
+        # Draw stimuli as appropriate; admonish early movements
         while self.evm.before(GO_SIGNAL):
+            # Fetch any input events since last loop
             q = pump(True)
-            _ = ui_request(queue=q)
 
+            # Check for events of interest
+            _ = ui_request(queue=q)
             touch_events = get_clicks(released=True, queue=q)
             if touch_events:
                 self.evm.stop_clock()
@@ -308,13 +322,16 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     also=(msg, self.bs.boundaries[RECT].center),
                 )
 
-                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
+                smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
 
+                # NOTE:
+                # TrialException() reshuffles current trial into block trial deck.
+                # This preserves trial counts and randomization.
                 raise TrialException('Premptive movement')
 
             rect_visible, circles_visible = False, False
 
-            # fixed delay before rect presented
+            # Draw appropriate stimuli at appropriate time
             if self.evm.after(RECTANGLE_ONSET) and not rect_visible:
                 self.draw_display(rect=True)
                 rect_visible = True  # don't do redundant redraws
@@ -327,10 +344,13 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 self.draw_display(rect=True, circles=True)
                 circles_visible = True
 
-        self.go_tone.play()
-        tone_play_time = self.evm.trial_time_ms
+        #
+        #   Response period
+        #
 
-        # Response window start #
+        self.go_tone.play()
+        tone_played_at = self.evm.trial_time_ms
+
         rt, mt, clicked_on, clicked_at, pay = None, None, None, None, None
 
         while rt is None and self.evm.before(TRIAL_TIMEOUT):
@@ -340,7 +360,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             touch_events = get_clicks(released=True, queue=q)
 
             if touch_events:
-                rt = self.evm.trial_time_ms - tone_play_time  # type: ignore[operator]
+                rt = self.evm.trial_time_ms - tone_played_at  # type: ignore[operator]
 
                 # conditionally close goggles at movement start
                 if self.condition == REWARD:
@@ -351,23 +371,23 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             # _ = ui_request(queue=q)
 
             # log touched point, if any
+            # FIX: having get_clicks() and listen_for_click() is needlessly confusing
             clicked_at, clicked_on = self.listen_for_click()
 
             if clicked_on is not None:
-                mt = self.evm.trial_time_ms - rt - tone_play_time  # type: ignore[operator]
-        # response window end #
+                mt = self.evm.trial_time_ms - rt - tone_played_at  # type: ignore[operator]
 
-        # Ensure circles have been removed, then return vision
-        clear()
+        #
+        #   Feedback phase
+        #
 
-        # TODO: Why was this commented out?
-        # self.goggles.write(OPEN)
+        clear()  # the display
 
-        # determine appropriate payout
+        # determine payout
         pay = self.get_payout(clicked_on)
         self.bank += pay
 
-        # conditionally display performance feedback
+        # Present condition appropriate feedback
         if clicked_on is not None:
 
             # only movement time provided on practice trials
@@ -379,29 +399,30 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     also=(message(text), self.bs.boundaries[RECT].center),
                 )
 
-            # only present earnings (e.g., no visual indication of performance)
             elif self.condition == REWARD:
 
                 smart_sleep(300)
                 self.goggles.write(OPEN)
 
-                # earnings for trial
+                # Display earnings
+
                 msg = message(f'Trial payout: {pay}', blit_txt=False)
                 self.draw_display(
                     rect=True,
                     also=(msg, self.bs.boundaries[RECT].center),
                 )
 
-                self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
+                smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
 
-                # current earnings for block
                 msg = message(f'Total points: {self.bank}')
                 self.draw_display(
                     rect=True,
                     also=(msg, self.bs.boundaries[RECT].center),
                 )
 
-            # only present landing point (e.g., no "earnings" in vision condition)
+                smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
+
+            # Open goggles immediately on touch (providing endpoint feedback)
             else:
                 self.goggles.write(OPEN)
 
@@ -413,8 +434,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                 also=(msg, self.bs.boundaries[RECT].center),
             )
 
-        self.wait_for(P.feedback_duration)  # type: ignore[attr-defined]
+        smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
 
+        # Gets aggregated in sqlite database
         return {
             'practicing': P.practicing,
             'block_num': P.block_number,
@@ -432,8 +454,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             'block_earnings': self.bank,
         }
 
+    # Called at end of each trial
     def trial_clean_up(self):
-        # Present block score summary at end of reward blocks
+        # If last trial of reward block, present total earnings
         if self.condition == REWARD:
             if P.trial_number % P.trials_per_block == 0:
                 clear()
@@ -455,9 +478,11 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
                 clear()
 
+    # Called once at experiment end; almost never needed, like here
     def clean_up(self):
         pass
 
+    # TODO: this could/should have been a dict
     def get_payout(self, clicked_on=None):
         if clicked_on is None:
             return TIMEOUT_PAYOUT
@@ -477,6 +502,8 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         else:
             return MISS_PAYOUT
 
+    # Logic for deciding "which" surface they touched
+    # Also returns touch coordinates
     def listen_for_click(self):
         clicks = get_clicks()
         clicked = None
@@ -506,11 +533,14 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         return clicks[0], clicked
 
+    # Does what it says
     def draw_display(
         self,
         fix: bool = False,
         rect: bool = False,
         circles: bool = False,
+        # "also" will try to blit whatever you pass it, does not check if that is a good idea
+        # Needs to be a tuple os (thing, xy)
         also=None,
     ):
 
@@ -553,6 +583,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         flip()
 
+    # Randomly determine circle placements within rectangle
     def get_circle_placements(self):
         rad_px = self.target_circle_d / 2
         circle_offset = 0.5 * rad_px
@@ -582,9 +613,3 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             }
 
         return placements
-
-    def wait_for(self, duration: float):
-        wait_period = CountDown(duration)
-        while wait_period.counting():
-            q = pump(True)
-            _ = ui_request(queue=q)
