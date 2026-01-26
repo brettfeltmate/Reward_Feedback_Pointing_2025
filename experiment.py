@@ -99,6 +99,9 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         # Go-signal
         self.go_tone = Tone(100)
 
+        # for storing block earnings
+        self.bank = 0
+
         #
         #   Set up visual properties
         #
@@ -178,14 +181,11 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             [VISION, REWARD] if P.condition == VISION else [REWARD, VISION]
         )
 
-        # Each condition repeated 3 times in interleaved order for total of 6 blocks
-        self.conditions = [cond for cond in self.conditions for _ in range(3)]
-
         # If desired, insert practice block at start of experiment
         if P.run_practice_blocks:
             self.insert_practice_block(
                 block_nums=[1],
-                trial_counts=P.trials_per_practice_block,  # type: ignore[attr-defined]
+                trial_counts=P.practice_trial_count,  # type: ignore[attr-defined]
             )
 
         #
@@ -196,18 +196,12 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             REWARD: (
                 'When you initiate your movement, the goggles will close, and you will not see the target or where you landed.'
                 '\n\n'
-                'The goggles will re-open at the end of the trial and you will see your points gained/lost on the trial,'
-                '\n'
-                'as well as your cumulative points so far.'
-                '\n\n'
-                f'You will complete {P.blocks_per_experiment * P.trials_per_block // 2} trials of this condition; you may take a break in between trials whenever you need.'
+                'The goggles will re-open at the end of the trial and you will see your points gained/lost on the trial.'
             ),
             VISION: (
-                'You will be able to see the target and where you land,'
+                'You will be able to see the target and where you landed,'
                 '\n'
-                'however you will not see how many points you gained/lost on the trial nor your cumulative points so far.'
-                '\n\n'
-                f'You will complete {P.blocks_per_experiment * P.trials_per_block // 2} trials of this condition; you may take a break in between trials whenever you need.'
+                'however you will not see how many points you gained/lost.'
             ),
         }
 
@@ -220,9 +214,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
             self.condition = 'practice'
         else:
             self.condition = self.conditions.pop(0)
-
-        # for storing block earnings
-        self.bank = 0
 
         instrux = '(PRACTICE BLOCK)\n' if P.practicing else '(TESTING BLOCK)\n'
 
@@ -367,11 +358,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     self.goggles.write(CLOSE)
 
         while mt is None and self.evm.before(TRIAL_TIMEOUT):
-            # q = pump(True)
-            # _ = ui_request(queue=q)
-
-            # log touched point, if any
-            # FIX: having get_clicks() and listen_for_click() is needlessly confusing
+            # having get_clicks() and listen_for_click() is needlessly confusing, sorry.
             clicked_at, clicked_on = self.listen_for_click()
 
             if clicked_on is not None:
@@ -390,7 +377,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         # Present condition appropriate feedback
         if clicked_on is not None:
 
-            # only movement time provided on practice trials
+            # to inspire quick movements
             if self.condition == 'practice':
                 text = f'Movement time was: {trunc(mt)} ms.'  # type: ignore[operation]
 
@@ -399,12 +386,10 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     also=(message(text), self.bs.boundaries[RECT].center),
                 )
 
+            # Earnings based feedback
             elif self.condition == REWARD:
-
-                smart_sleep(300)
+                smart_sleep(300)  # I don't remember why
                 self.goggles.write(OPEN)
-
-                # Display earnings
 
                 msg = message(f'Trial payout: {pay}', blit_txt=False)
                 self.draw_display(
@@ -412,17 +397,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
                     also=(msg, self.bs.boundaries[RECT].center),
                 )
 
-                smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
-
-                msg = message(f'Total points: {self.bank}')
-                self.draw_display(
-                    rect=True,
-                    also=(msg, self.bs.boundaries[RECT].center),
-                )
-
-                smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
-
-            # Open goggles immediately on touch (providing endpoint feedback)
+            # i.e., visual feedback condition
             else:
                 self.goggles.write(OPEN)
 
@@ -436,7 +411,6 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
         smart_sleep(P.feedback_duration)  # type: ignore[attr-defined]
 
-        # Gets aggregated in sqlite database
         return {
             'practicing': P.practicing,
             'block_num': P.block_number,
@@ -456,27 +430,39 @@ class reward_feedback_pointing_2025(klibs.Experiment):
 
     # Called at end of each trial
     def trial_clean_up(self):
-        # If last trial of reward block, present total earnings
-        if self.condition == REWARD:
-            if P.trial_number % P.trials_per_block == 0:
-                clear()
-                self.goggles.write(OPEN)
+        show = None
+        if P.trial_number % P.trials_between_breaks == 0:  # type: ignore[known-attribute]
+            if P.trial_number % P.trials_per_block != 0:
+                show = 'score'
+            else:
+                show = 'break'
+        if show is not None:
+            clear()
+            self.goggles.write(OPEN)
 
+            if show == 'score':
                 fill()
                 message(
-                    text=f'End of block! You scored: {self.bank}.\nPress spacebar to continue.',
+                    text=f'Block completed!\nCurrent earnings: {self.bank}.\n\nPress spacebar to continue.',
                     location=P.screen_c,
                     blit_txt=True,
                 )
                 flip()
 
-                while True:
-                    q = pump(True)
-                    _ = ui_request(queue=q)
-                    if key_pressed(SPACE, queue=q):
-                        break
+            elif show == 'break':
+                fill()
+                message(
+                    text='Rest period.\n\nWhen ready, press spacebar to continue.',
+                    location=P.screen_c,
+                    blit_txt=True,
+                )
+                flip()
 
-                clear()
+            while True:
+                q = pump(True)
+                _ = ui_request(queue=q)
+                if key_pressed(SPACE, queue=q):
+                    break
 
     # Called once at experiment end; almost never needed, like here
     def clean_up(self):
@@ -540,7 +526,7 @@ class reward_feedback_pointing_2025(klibs.Experiment):
         rect: bool = False,
         circles: bool = False,
         # "also" will try to blit whatever you pass it, does not check if that is a good idea
-        # Needs to be a tuple os (thing, xy)
+        # Needs to be a tuple of (thing, [x, y])
         also=None,
     ):
 
